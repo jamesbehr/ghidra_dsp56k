@@ -2242,7 +2242,7 @@ inst:"cmp" "#"^opt_extension,d is (inst_23_14=0b0000000101 & inst_13_8=0 & inst_
   result_flags(result);
 }
 
-inst:"cmpm" JJJ_word,d is inst_7=0b0 & inst_2_0=0b111 & JJJ_word & d & JJJ>=4 {
+parinst:"cmpm" JJJ_word,d is inst_7=0b0 & inst_2_0=0b111 & JJJ_word & d & JJJ>=4 {
   local s1:7=0;
   s1[24,32]=sext(JJJ_word);
   s1 = abs(s1);
@@ -2252,7 +2252,7 @@ inst:"cmpm" JJJ_word,d is inst_7=0b0 & inst_2_0=0b111 & JJJ_word & d & JJJ>=4 {
   result_flags(result);
 }
 
-inst:"cmpm" s,d is inst_7=0 & s & JJJ=0 & inst_2_0=0b111 & d {
+parinst:"cmpm" s,d is inst_7=0 & s & JJJ=0 & inst_2_0=0b111 & d {
   local s1:7=abs(s);
   local s2:7=abs(d);
   sub_flags(s2,s1);
