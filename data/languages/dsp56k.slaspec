@@ -338,6 +338,7 @@ define token inst_word(24)
   inst_2_0                  = (0,   2)
   inst_1_0                  = (0,   1)
 
+  sssss                     = (8,  12) # for mpy/mac/maci/macr/macri/mpyri
   ttt                       = (8,  10)
   d_xx                      = (5,   5) # d_xx is for DMACxx, MPYxx and MACxx
   qqq                       = (4,   6)
@@ -603,6 +604,24 @@ macro acc_write_unsigned8(dst, src) {
 }
 
 macro stack_push(ophi, oplo) {
+  # TODO: Investigate cleaning up decompiling. Storing this stuff in the stack
+  # causes Ghidra to think that we're trying to allocate variables on the
+  # stack. For example a stack_push(inst_next, sr) causes Ghidra to output
+  # decompilation like
+  #
+  #       *(uint6 *)puVar51 = CONCAT33(uVar14,uVar11);
+  #       puVar52 = (undefined *)((int)puVar51 + 1);
+  #       uVar14 = 0x4941;
+  #       uVar11 = uVar12; 
+  #       function();
+  #
+  # The constant in uVar14 is inst_next * 3, and uVar11 is set to sr, and there
+  # is some incrementing going on, presumably from the stack pointer.
+  #
+  # This is incredibly noisy. We shouldn't have to see the return location
+  # pushed onto the stack. Perhaps it is possible to have a separate system and
+  # user stack.
+
   local combined:6;
   combined[24,24]=ssh;
   combined[0, 24]=ssl;
@@ -3397,7 +3416,17 @@ parinst:"mac" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0b10 & mul_sgn & 
   d = d + prod;
 }
 
-# TODO MAC format & opcodes 2 with a short immediate operand
+# TODO: Pcode
+inst:"mac" mul_sgn^QQ,sssss,d is inst_23_13=0b00000001000 & mul_sgn & sssss & inst_7_6=0b11 & QQ & d & k & inst_1_0=0b10 {
+  local op1:7=sext(QQ);
+  local tmp:1=sssss; 
+  local op2:7=sext(tmp);
+  local prod:7=(op1*op2) << 1;
+  if (mul_sgn==0) goto <mac_end>;
+  prod = -prod;
+  <mac_end>
+  d = d + prod;
+}
 
 inst:"maci" mul_sgn^"#"^opt_extension,qq,d is inst_23_6=0b000000010100000111 & inst_1_0=0b10 & mul_sgn & d & qq; opt_extension {
   local op1:7=sext(qq);
@@ -3420,6 +3449,8 @@ parinst:"macr" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0b11 & mul_sgn &
   d = d + prod;
   proc_round(d);
 }
+
+# TODO: macr instruction format 2
 
 inst:"macri" mul_sgn^"#"^opt_extension,qq,d is inst_23_6=0b000000010100000111 & inst_1_0=0b11 & mul_sgn & d & qq; opt_extension {
   local op1:7=sext(qq);
@@ -3483,6 +3514,8 @@ parinst:"mpy" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0 & mul_sgn & d &
   <mpy_end>
 }
 
+# TODO: mpy format 2
+
 inst:"mpyi" mul_sgn^"#"^opt_extension,qq,d is inst_23_6=0b000000010100000111 & inst_1_0=0b00 & mul_sgn & d & qq; opt_extension {
   local op1:7=sext(qq);
   local op2_:6=opt_extension;
@@ -3503,6 +3536,8 @@ parinst:"mpyr" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0b01 & mul_sgn &
   <mpyr_end>
   proc_round(d);
 }
+
+# TODO: mpyr format 2
 
 inst:"mpyri" mul_sgn^"#"^opt_extension,qq,d is inst_23_6=0b000000010100000111 & inst_1_0=0b01 & mul_sgn & d & qq; opt_extension {
   local op1:7=sext(qq);
