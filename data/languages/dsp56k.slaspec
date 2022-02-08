@@ -710,6 +710,73 @@ macro calc_cond_call(x, dst) {
   <calc_cond_call_end>
 }
 
+# Workaround: register jumps
+macro calc_cond_register(x, dst) {
+  if (!
+  ( (!$(cf)                   && x==0b0000)
+  | ($(cf)                    && x==0b1000)
+  | (!$(ef)                   && x==0b0101)
+# EQ, Z=1
+  | ($(zf)                    && x==0b1010)
+  | ($(ef)                    && x==0b1101)
+# GE, N^V=0
+  | ($(nf)==$(vf)             && x==0b0001)
+# GT, Z+(N^V)=0
+  | ((!$(zf) && $(nf)==$(vf)) && x==0b0111)
+  | (!$(lf)                   && x==0b0110)
+# LE, Z+(N^V)=1
+  | (($(zf)||($(nf)!=$(vf)))  && x==0b1111)
+  | ($(lf)                    && x==0b1110)
+# LT, N^V=1
+  | ($(nf)!=$(vf)             && x==0b1001)
+  | ($(nf)                    && x==0b1011)
+# NE, Z=0
+  | (!$(zf)                   && x==0b0010)
+# NR, Z+(~U&~E)=1
+  | ($(zf)||(!$(uf)&&!$(ef))  && x==0b1100)
+  | (!$(nf)                   && x==0b0011)
+# NN, Z+(~U&~E)=0
+  | (!$(zf)&&($(uf)||$(ef))   && x==0b0100)
+  ) 
+  ) goto <calc_cond_register_end>;
+  goto [dst];
+  <calc_cond_register_end>
+}
+
+macro calc_cond_call_register(x, dst) {
+  if (!
+  ( (!$(cf)                   && x==0b0000)
+  | ($(cf)                    && x==0b1000)
+  | (!$(ef)                   && x==0b0101)
+# EQ, Z=1
+  | ($(zf)                    && x==0b1010)
+  | ($(ef)                    && x==0b1101)
+# GE, N^V=0
+  | ($(nf)==$(vf)             && x==0b0001)
+# GT, Z+(N^V)=0
+  | ((!$(zf) && $(nf)==$(vf)) && x==0b0111)
+  | (!$(lf)                   && x==0b0110)
+# LE, Z+(N^V)=1
+  | (($(zf)||($(nf)!=$(vf)))  && x==0b1111)
+  | ($(lf)                    && x==0b1110)
+# LT, N^V=1
+  | ($(nf)!=$(vf)             && x==0b1001)
+  | ($(nf)                    && x==0b1011)
+# NE, Z=0
+  | (!$(zf)                   && x==0b0010)
+# NR, Z+(~U&~E)=1
+  | ($(zf)||(!$(uf)&&!$(ef))  && x==0b1100)
+  | (!$(nf)                   && x==0b0011)
+# NN, Z+(~U&~E)=0
+  | (!$(zf)&&($(uf)||$(ef))   && x==0b0100)
+  ) 
+  ) goto <calc_cond_call_register_end>;
+
+  stack_push(inst_next, sr);
+  call [dst];
+  <calc_cond_call_register_end>
+}
+
 # Workaround: feeding inst_next into the macro ain't work
 macro calc_cond_inst_next(x) {
   if
@@ -788,6 +855,7 @@ define pcodeop proc_stop;
 define pcodeop proc_trap;
 define pcodeop proc_wait;
 define pcodeop proc_div_step;
+define pcodeop proc_debug;
 
 
 # Effective Addressing Mode Encoding 1: page 12-18
@@ -2173,6 +2241,16 @@ inst:"cmpm" s,d is inst_7=0 & s & JJJ=0 & inst_2_0=0b111 & d {
   result_flags(result);
 }
 
+inst:"debug" is inst_23_0=0b000000000000001000000000 {
+  proc_debug();
+}
+
+inst:"debug"^cc2_name is inst_23_4=0b00000000000000110000 & cc2_name & cc2_cccc {
+  local cond:2=cc2_cccc;
+  calc_cond_inst_next(cond);
+  proc_debug();
+}
+
 inst:"dec" D is inst_23_1=0b00000000000000000000101 & D {
 # TODO flags
   D = D - 1;
@@ -2738,9 +2816,18 @@ inst:"illegal" is inst_23_0=0b000000000000000000000101 {
   proc_illegal();
 }
 
-
 insert_src: SSS is SSS & inst_3_1>=2 { export SSS; }
 insert_src: "#"^opt_extension is inst_3_1=0; opt_extension { export opt_extension; }
+
+# FIXME: Pcode is wrong
+inst:"extractu" insert_src,s,D is (inst_23_7=0b00001100000110001 & s & D) ... & insert_src {
+  local off:3= zext(insert_src[0,6]);
+  local width:3 = zext(insert_src[12,6]);
+  local mask:7=(1<<width)-1;
+
+  D = (zext(s) >> off) & mask;
+  calc_flags(0b00111111, 0, 0, D==0, D s< 0, 0, 0, 0, 0);
+}
 
 inst:"inc" D is inst_23_1=0b00000000000000000000100 & D {
 # TODO flags
@@ -2773,7 +2860,7 @@ inst:"j"^cc2_name jmp_ea24 is (inst_23_14=0b0000101011 & inst_7_4=0b1010 & cc2_c
 
 inst:"j"^cc2_name jmp_ea3 is inst_23_14=0b0000101011 & inst_7_4=0b1010 & cc2_cccc & cc2_name & jmp_ea3 {
   local cond:2=cc2_cccc;
-  calc_cond(cond, jmp_ea3);
+  calc_cond_register(cond, jmp_ea3);
 }
 
 # ----------------- JScc --------------------
@@ -2790,7 +2877,7 @@ inst:"js"^cc2_name jmp_ea24 is (inst_23_14=0b0000101111 & inst_7_4=0b1010 & cc2_
 
 inst:"js"^cc2_name jmp_ea3 is inst_23_14=0b0000101111 & inst_7_4=0b1010 & cc2_cccc & cc2_name & jmp_ea3 {
   local cond:2=cc2_cccc;
-  calc_cond_call(cond, jmp_ea3);
+  calc_cond_call_register(cond, jmp_ea3);
 }
 
 # FM page 322 (13-82), JCLR "bbbb": only covers 16 bits. should be bbbbb?
