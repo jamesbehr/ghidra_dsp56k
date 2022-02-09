@@ -663,8 +663,7 @@ macro result_flags(result) {
   $(zf) = result == 0;
 }
 
-
-
+# TODO: Is there a way to extract the IF as a separate macro
 macro calc_cond(x, dst) {
   if
   ( (!$(cf)                   && x==0b0000)
@@ -826,6 +825,41 @@ macro calc_cond_inst_next(x) {
   | (!$(zf)&&($(uf)||$(ef))   && x==0b0100)
   ) 
   ) goto inst_next;
+}
+
+macro calc_cond_brk(x) {
+  if (!
+  ( (!$(cf)                   && x==0b0000)
+  | ($(cf)                    && x==0b1000)
+  | (!$(ef)                   && x==0b0101)
+# EQ, Z=1
+  | ($(zf)                    && x==0b1010)
+  | ($(ef)                    && x==0b1101)
+# GE, N^V=0
+  | ($(nf)==$(vf)             && x==0b0001)
+# GT, Z+(N^V)=0
+  | ((!$(zf) && $(nf)==$(vf)) && x==0b0111)
+  | (!$(lf)                   && x==0b0110)
+# LE, Z+(N^V)=1
+  | (($(zf)||($(nf)!=$(vf)))  && x==0b1111)
+  | ($(lf)                    && x==0b1110)
+# LT, N^V=1
+  | ($(nf)!=$(vf)             && x==0b1001)
+  | ($(nf)                    && x==0b1011)
+# NE, Z=0
+  | (!$(zf)                   && x==0b0010)
+# NR, Z+(~U&~E)=1
+  | ($(zf)||(!$(uf)&&!$(ef))  && x==0b1100)
+  | (!$(nf)                   && x==0b0011)
+# NN, Z+(~U&~E)=0
+  | (!$(zf)&&($(uf)||$(ef))   && x==0b0100)
+  ) 
+  ) goto <calc_cond_brk_end>;
+
+  local tmp:3;
+  stack_pop(tmp, sr);
+  stack_pop(la, lc);
+  <calc_cond_brk_end>
 }
 
 macro calc_flags(mask, cbit, vbit, zbit, nbit, ubit, ebit, lbit, sbit) {
@@ -1023,10 +1057,32 @@ inst:"move" xmov3_reg56,"x:"^(ea1_rrr_rn+xmov2_rn_xxx) is xmov3_reg56 & ea1_rrr_
 xrmov_op1_24:xrmov_ff_word is xrmov_ff < 2 & xrmov_ff_word { export xrmov_ff_word; }
 xrmov_op1_56:xrmov_ff_long is xrmov_ff > 1 & xrmov_ff_long { export xrmov_ff_long; }
 
+# Class I, W=1, S2/D2 = X0/X1
 parMove:"x:"^ea1,xrmov_op1_24 xrmov_s2,xrmov_d2    is (xrmov_op1_24 & xrmov_s2 & xrmov_d2 & inst_23_20=0b0001 & inst_14=0 & inst_15=1) ... & ea1 { xrmov_op1_24=*[xmem]:3 ea1; xrmov_d2=xrmov_s2[24,24]; }
+
+# Class I, W=0, S2/D2 = X0/X1
 parMove:xrmov_op1_24,"x:"^ea1 xrmov_s2,xrmov_d2    is (xrmov_op1_24 & xrmov_s2 & xrmov_d2 & inst_23_20=0b0001 & inst_14=0 & inst_15=0) ... & ea1 { *[xmem]:3 ea1=xrmov_op1_24; xrmov_d2=xrmov_s2[24,24]; }
+
+# Class I, W=1, S2/D2 = A/B
 parMove:"x:"^ea1,xrmov_op1_56 xrmov_s2,xrmov_d2    is (xrmov_op1_56 & xrmov_s2 & xrmov_d2 & inst_23_20=0b0001 & inst_14=0 & inst_15=1) ... & ea1 { acc_write_signed24(xrmov_op1_56,*[xmem]:3 ea1); xrmov_d2=xrmov_s2[24,24]; }
+
+# Class I, W=0, S2/D2 = A/B
 parMove:xrmov_op1_56,"x:"^ea1 xrmov_s2,xrmov_d2    is (xrmov_op1_56 & xrmov_s2 & xrmov_d2 & inst_23_20=0b0001 & inst_14=0 & inst_15=0) ... & ea1 { *[xmem]:3 ea1=xrmov_op1_56[24,24]; xrmov_d2=xrmov_s2[24,24]; }
+
+# Class I, W=1, S2/D2 = X0/X1, Long Immediate
+parMove:ea1_imm24,xrmov_op1_24 xrmov_s2,xrmov_d2    is (xrmov_op1_24 & xrmov_s2 & xrmov_d2 & inst_23_20=0b0001 & inst_14=0 & inst_15=1) ... & ea1_imm24 { 
+	xrmov_op1_24=ea1_imm24;
+	xrmov_d2=xrmov_s2[24,24]; 
+}
+
+# Class I, W=1, S2/D2 = A/B, Long Immediate
+parMove:ea1_imm24,xrmov_op1_56 xrmov_s2,xrmov_d2    is (xrmov_op1_56 & xrmov_s2 & xrmov_d2 & inst_23_20=0b0001 & inst_14=0 & inst_15=1) ... & ea1_imm24 { 
+	acc_write_signed24(xrmov_op1_56,ea1_imm24); 
+	xrmov_d2=xrmov_s2[24,24]; 
+}
+
+# TODO: Class II doesn't support long absolute address/long immediate (ea3)
+# Class II
 parMove:xrmov2_d,"x:"^ea1 "x0"^,xrmov2_d2           is (xrmov2_d & xrmov2_d2 & inst_23_17=0b0000100 & inst_15_14=0b00) ... & ea1 { *[xmem]:3 ea1=xrmov2_d[24,24]; acc_write_signed24(xrmov2_d,x0); }
 
 # Y Memory Data Move
@@ -1089,10 +1145,32 @@ inst:"move" ymov3_reg56,"y:"^(ea1_rrr_rn+ymov2_rn_xxx) is ymov3_reg56 & ea1_rrr_
 yrmov_op1_24:yrmov_ff_word is yrmov_ff < 2 & yrmov_ff_word { export yrmov_ff_word; }
 yrmov_op1_56:yrmov_ff_long is yrmov_ff > 1 & yrmov_ff_long { export yrmov_ff_long; }
  
+# Class I, W=1, S2/D2 = Y0/Y1
 parMove:yrmov_s,yrmov_d "y:"^ea1,yrmov_op1_24       is (yrmov_op1_24 & yrmov_s & yrmov_d & inst_23_20=0b0001 & inst_14=1 & inst_15=1) ... & ea1 { yrmov_d=yrmov_s[24,24]; yrmov_op1_24=*[ymem]:3 ea1; }
+
+# Class I, W=0, S2/D2 = Y0/Y1
 parMove:yrmov_s,yrmov_d yrmov_op1_24,"y:"^ea1       is (yrmov_op1_24 & yrmov_s & yrmov_d & inst_23_20=0b0001 & inst_14=1 & inst_15=0) ... & ea1 { yrmov_d=yrmov_s[24,24]; *[ymem]:3 ea1=yrmov_op1_24; }
+
+# Class I, W=1, S2/D2 = A/B
 parMove:yrmov_s,yrmov_d "y:"^ea1,yrmov_op1_56       is (yrmov_op1_56 & yrmov_s & yrmov_d & inst_23_20=0b0001 & inst_14=1 & inst_15=1) ... & ea1 { yrmov_d=yrmov_s[24,24]; acc_write_signed24(yrmov_op1_56,*[ymem]ea1); }
+
+# Class I, W=0, S2/D2 = A/B
 parMove:yrmov_s,yrmov_d yrmov_op1_56,"y:"^ea1       is (yrmov_op1_56 & yrmov_s & yrmov_d & inst_23_20=0b0001 & inst_14=1 & inst_15=0) ... & ea1 { yrmov_d=yrmov_s[24,24]; *[ymem]ea1=yrmov_op1_56[24,24]; }
+
+# Class I, W=1, S2/D2 = Y0/Y1, Long Immediate
+parMove:yrmov_s,yrmov_d ea1_imm24,yrmov_op1_24       is (yrmov_op1_24 & yrmov_s & yrmov_d & inst_23_20=0b0001 & inst_14=1 & inst_15=1) ... & ea1_imm24 { 
+	yrmov_d=yrmov_s[24,24]; 
+	yrmov_op1_24=ea1_imm24; 
+}
+
+# Class I, W=1, S2/D2 = A/B, Long Immediate
+parMove:yrmov_s,yrmov_d ea1_imm24,yrmov_op1_56       is (yrmov_op1_56 & yrmov_s & yrmov_d & inst_23_20=0b0001 & inst_14=1 & inst_15=1) ... & ea1_imm24 { 
+	yrmov_d=yrmov_s[24,24]; 
+	acc_write_signed24(yrmov_op1_56,ea1_imm24); 
+}
+
+# TODO: Class II doesn't support long absolute address/long immediate (ea3)
+# Class II
 parMove:"y0"^,yrmov2_d2 yrmov2_d,"y:"^ea1            is (yrmov2_d & yrmov2_d2 & inst_23_17=0b0000100 & inst_15_14=0b10) ... & ea1 { acc_write_signed24(yrmov2_d,y0); *[ymem]:3 ea1=yrmov2_d[24,24]; }
 
 # Long Memory Data Move
@@ -2807,6 +2885,14 @@ inst:"dor" jmp_reg56,bra_addr24 is loopActive=2 & inst_23_14=0b0000011011 & jmp_
   la = opt_extension-1;
 }
 
+# -------------------- BRKcc ---------------------
+
+inst:"brk"^cc2_name is inst_23_4=0b00000000000000100001 & cc2_cccc & cc2_name {
+  # TODO: Investigate if a macro is the cleanest way to do this
+  local cond:2=cc2_cccc;
+  calc_cond_brk(cond);
+}
+
 # -------------------- ENDDO ---------------------
 
 inst:"enddo" is inst_23_0=0b000000000000000010001100
@@ -3416,7 +3502,6 @@ parinst:"mac" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0b10 & mul_sgn & 
   d = d + prod;
 }
 
-# TODO: Pcode
 inst:"mac" mul_sgn^QQ,sssss,d is inst_23_13=0b00000001000 & mul_sgn & sssss & inst_7_6=0b11 & QQ & d & k & inst_1_0=0b10 {
   local op1:7=sext(QQ);
   local tmp:1=sssss; 
@@ -3450,7 +3535,17 @@ parinst:"macr" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0b11 & mul_sgn &
   proc_round(d);
 }
 
-# TODO: macr instruction format 2
+inst:"macr" mul_sgn^QQ,sssss,d is inst_23_13=0b00000001000 & sssss & inst_7_6=0b11 & QQ & d & mul_sgn & k & inst_1_0=0b11 {
+  local op1:7=sext(QQ);
+  local tmp:1=sssss;
+  local op2:7=sext(tmp);
+  local prod:7=(op1*op2) << 1;
+  if (mul_sgn==0) goto <mac_end>;
+  prod = -prod;
+  <mac_end>
+  d = d + prod;
+  proc_round(d);
+}
 
 inst:"macri" mul_sgn^"#"^opt_extension,qq,d is inst_23_6=0b000000010100000111 & inst_1_0=0b11 & mul_sgn & d & qq; opt_extension {
   local op1:7=sext(qq);
@@ -3514,7 +3609,15 @@ parinst:"mpy" mul_sgn^QQQ_op1,QQQ_op2,d is inst_7=1 & inst_1_0=0 & mul_sgn & d &
   <mpy_end>
 }
 
-# TODO: mpy format 2
+inst:"mpy" mul_sgn^QQ,sssss,d is inst_23_13=0b00000001000 & mul_sgn & sssss & inst_7_6=0b11 & QQ & d & k & inst_1_0=0b00 {
+  local op1:7=sext(QQ);
+  local tmp:1=sssss; 
+  local op2:7=sext(tmp);
+  d = (op1*op2) << 1;
+  if (mul_sgn==0) goto <mpy_end>;
+  d = -d;
+  <mpy_end>
+}
 
 inst:"mpyi" mul_sgn^"#"^opt_extension,qq,d is inst_23_6=0b000000010100000111 & inst_1_0=0b00 & mul_sgn & d & qq; opt_extension {
   local op1:7=sext(qq);
